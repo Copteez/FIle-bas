@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.mixture import GaussianMixture
+import copy
 
 def get_image_input():
     choice = input("Choose input method - Type 'upload' to upload an image or 'camera' to use the camera: ")
@@ -39,18 +41,52 @@ def capture_hand_image():
     return frame
 
 
-def preprocess_image(image):
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    cv2.imwrite('hsv_image.jpg', hsv)
+def preprocess_image(img_bgr):
+    img = cv2.resize(img_bgr, None, fx=0.5, fy=0.5)
+
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h,s,v = cv2.split(img)
+    shape = h.shape
+    
+
+    # Smooth the three color channels one by one
+    h = cv2.medianBlur(h,5)
+    s = cv2.medianBlur(s,5)
+    v = cv2.medianBlur(v,5)
+
+    num_clusters = 2
+    # Warning: X is 3xNum_pixels. To fit the kmeans model X.T should be used
+    X = np.array([h.reshape(-1), s.reshape(-1), v.reshape(-1)])
+    gmm=GaussianMixture(n_components=num_clusters,
+                    covariance_type='full',
+                    init_params='kmeans',
+                    max_iter=300, n_init=4, random_state=10)
+    gmm.fit(X.T)
+
+    Y = gmm.predict(X.T)
+
+    mask_img = copy.deepcopy(h.reshape(-1))
+
+    unique, counts = np.unique(Y, return_counts=True)
+    dic = dict(zip(unique, counts))
+    
+    if dic[0] > dic[1]:
+        mask_img[ Y==0 ] = 0 
+        mask_img[ Y==1 ] = 1
+    else:
+        mask_img[ Y==0 ] = 1
+        mask_img[ Y==1 ] = 0
+
+    mask_img = mask_img.reshape(shape)
+
+    cv2.imwrite('img_bin.jpg', mask_img)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(10, 10))
+    img_bin = cv2.morphologyEx(mask_img, cv2.MORPH_OPEN, kernel)
+    cv2.imwrite('img_bin_image.jpg', img_bin)
     lower_skin = np.array([0, 20, 70], dtype=np.uint8)
     upper_skin = np.array([20, 255, 255], dtype=np.uint8)
-    mask = cv2.inRange(hsv, lower_skin, upper_skin)
+    mask = cv2.inRange(img_bin, lower_skin, upper_skin)
     cv2.imwrite('mask_image.jpg', mask)
-    kernel = np.ones((5,5), np.uint8)
-    mask = cv2.dilate(mask, kernel, iterations=3)
-    cv2.imwrite('dilated_image.jpg', mask)
-    mask = cv2.GaussianBlur(mask, (5,5), 100)
-    cv2.imwrite('gaussianBlur_image.jpg', mask)
     return mask
 
 def extract_features(image):
