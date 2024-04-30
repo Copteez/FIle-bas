@@ -1,6 +1,8 @@
 import cv2
 import mediapipe as mp
 import math
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 def calculate_finger_lengths(hand_landmarks):
     # Finger landmarks indices
@@ -11,7 +13,6 @@ def calculate_finger_lengths(hand_landmarks):
                       [20, 19, 18, 17]]  # Little finger
 
     finger_lengths = []
-
     for finger_index in finger_indices:
         # Calculate the length of the finger segments
         length = 0
@@ -22,6 +23,9 @@ def calculate_finger_lengths(hand_landmarks):
         finger_lengths.append(length)
     
     return finger_lengths
+
+def store_features(features, label, database):
+    database[label] = features
 
 def detect_hands():
     cap = cv2.VideoCapture(0)  # Open the default camera
@@ -60,18 +64,77 @@ def detect_hands():
                     cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
 
                 # Calculate finger lengths
-                finger_lengths = calculate_finger_lengths(hand_landmarks)
+                finger_lengths = calculate_finger_lengths(hand_landmarks) ## location of fingers above
                 for i, length in enumerate(finger_lengths):
                     cv2.putText(frame, f'Finger {i+1}: {length:.2f} pixels', (10, 30*(i+1)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
         # Display the frame
         cv2.imshow('Hand Detection', frame)
+        # print(finger_lengths)
+        if cv2.waitKey(1) & 0xFF == ord('s'):
+            cap.release()
+            cv2.destroyAllWindows()
+            return finger_lengths
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+def authenticate_user(features, database):
+    if features is None:
+        return None
+    labels = list(database.keys())
+    feature_list = np.array(list(database.values()))
+    
+    if len(feature_list) == 0:
+        print("No users in database to match.")
+        return None
+    
+    features_normalized = np.array(features).reshape(1, -1)
+    
+    print(features_normalized*10)
+    feature_list_normalized = np.array(feature_list)
+    print(feature_list_normalized*10)
+    
+    # Compute cosine similarity for all users in the database
+    similarities = cosine_similarity(features_normalized*10, feature_list_normalized*10)
+    print(similarities)
+    
+    # Find the index of the user with the highest similarity
+    max_index = np.argmax(similarities)
+    
+    # Retrieve the label of the matching user
+    matching_user_label = labels[max_index]
+    
+    # Check if the maximum similarity exceeds the threshold
+    similarity_threshold = 0.9997
+    if similarities[0, max_index] < similarity_threshold:
+        return "No matching user found."
+    
+    return matching_user_label
 
-    cap.release()
-    cv2.destroyAllWindows()
 
-if __name__ == "__main__":
-    detect_hands()
+database = {}
+
+while True:
+    action = input("Type 'register' to register, 'login' to authenticate, or 'exit' to quit: ").lower()
+    if action == 'exit':
+        break
+    elif action == 'register':
+        print("Registration:")
+        user_name = input("Enter your name for registration: ")
+        userhandimage = detect_hands()
+        if userhandimage:
+            store_features(userhandimage, user_name, database)
+            print("success!")
+        else:
+            print("Failed to register. Please try again with a clear image of your hand.")
+    elif action == 'login':
+        print("Authentication: ")
+        authen_hand_data = detect_hands()
+        if authen_hand_data:
+            authen_users = authenticate_user(authen_hand_data, database)
+            if authen_users:
+                print(f"Authenticated user ID: {authen_users}")
+            else:
+                print("Authentication Failed. Your hand aren't match.")
+        else:
+            print("Failed to authenticate. Please try again with a clear image of your hand.")
+    else: 
+        print("Invalid input. Please type 'register', 'login', or 'exit'.")
